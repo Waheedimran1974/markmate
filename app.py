@@ -1,13 +1,13 @@
 import streamlit as st
 import PyPDF2
-import google.generativeai as genai
 from supabase import create_client
 from datetime import datetime
 import re
+from google import genai
 
 # ---------- Load secrets ----------
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+gemini_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 st.set_page_config(page_title="MarkMate", page_icon="✏️", layout="wide")
 st.title("✏️ MarkMate")
@@ -60,8 +60,6 @@ if st.session_state.user is not None:
 
         if text.strip():
             with st.spinner("AI examiner is marking your work..."):
-                # Use stable gemini-pro model
-                model = genai.GenerativeModel('gemini-pro')
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
 
@@ -80,7 +78,11 @@ Give feedback in this exact format:
 
 💡 SUMMARY: (2 sentences)
 """
-                response = model.generate_content(prompt)
+                # Using the new gemini-2.5-flash model as it's cost-efficient and powerful
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt
+                )
                 feedback = response.text
 
                 # Extract score
