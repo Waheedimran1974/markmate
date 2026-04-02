@@ -5,7 +5,7 @@ from supabase import create_client
 from datetime import datetime
 import re
 
-# --- Load secrets ---
+# ---------- Load secrets ----------
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
@@ -13,7 +13,7 @@ st.set_page_config(page_title="MarkMate", page_icon="✏️", layout="wide")
 st.title("✏️ MarkMate")
 st.caption("AI examiner – like a real teacher with a red pen")
 
-# --- Authentication ---
+# ---------- Authentication UI ----------
 if "user" not in st.session_state:
     st.session_state.user = None
 
@@ -45,11 +45,10 @@ with st.sidebar:
             st.session_state.user = None
             st.rerun()
 
-# --- Main app (only if logged in) ---
+# ---------- Main app (only logged in) ----------
 if st.session_state.user is not None:
     user_id = st.session_state.user.id
 
-    # Upload area
     uploaded_file = st.file_uploader("Upload your exam paper (PDF)", type=["pdf"])
 
     if uploaded_file is not None:
@@ -61,6 +60,7 @@ if st.session_state.user is not None:
 
         if text.strip():
             with st.spinner("AI examiner is marking your work..."):
+                # Use stable gemini-pro model
                 model = genai.GenerativeModel('gemini-pro')
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
@@ -105,7 +105,7 @@ Give feedback in this exact format:
     else:
         st.info("Upload a PDF to get started.")
 
-    # Show user history
+    # ---------- User history ----------
     with st.expander("📜 Your Past Markings"):
         try:
             history = supabase.table("markings").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
