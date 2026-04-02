@@ -21,7 +21,7 @@ if uploaded_file is not None:
 
     if text.strip():
         with st.spinner("AI examiner is marking your work..."):
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
 
