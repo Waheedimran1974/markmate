@@ -78,7 +78,6 @@ Give feedback in this exact format:
 
 💡 SUMMARY: (2 sentences)
 """
-                # Using Gemini 2.5 Flash (fast, cost-efficient)
                 response = gemini_client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=prompt
