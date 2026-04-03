@@ -59,7 +59,7 @@ if st.session_state.user is not None:
                 text += page.extract_text() or ""
 
         if text.strip():
-            with st.spinner("AI examiner is marking your work..."):
+            with st.spinner("AI examiner (Gemini 2.5) is marking your work..."):
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
 
@@ -78,7 +78,7 @@ Give feedback in this exact format:
 
 💡 SUMMARY: (2 sentences)
 """
-                # Using the new gemini-2.5-flash model as it's cost-efficient and powerful
+                # Using Gemini 2.5 Flash (fast, cost-efficient)
                 response = gemini_client.models.generate_content(
                     model="gemini-2.5-flash",
                     contents=prompt
