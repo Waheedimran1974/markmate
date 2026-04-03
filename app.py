@@ -1,4 +1,4 @@
-=import streamlit as st
+import streamlit as st
 import PyPDF2
 from supabase import create_client
 from datetime import datetime
@@ -13,11 +13,11 @@ st.set_page_config(page_title="MarkMate", page_icon="✏️", layout="wide")
 st.title("✏️ MarkMate")
 st.caption("AI examiner – like a real teacher with a red pen")
 
-# ---------- Session State ----------
+# ---------- Session state ----------
 if "user" not in st.session_state:
     st.session_state.user = None
 
-# ---------- Authentication UI ----------
+# ---------- Sidebar authentication ----------
 with st.sidebar:
     st.header("Account")
     if st.session_state.user is None:
@@ -36,7 +36,7 @@ with st.sidebar:
             if st.button("Sign Up"):
                 try:
                     res = supabase.auth.sign_up({"email": email, "password": password})
-                    st.success("Account created! Please check your email to confirm.")
+                    st.success("✅ Account created! Check your email to confirm.")
                 except Exception as e:
                     st.error(f"Sign up failed: {e}")
     else:
@@ -46,21 +46,23 @@ with st.sidebar:
             st.session_state.user = None
             st.rerun()
 
-# ---------- Main App (Logged In) ----------
+# ---------- Main app (only logged in) ----------
 if st.session_state.user is not None:
     user_id = st.session_state.user.id
 
     uploaded_file = st.file_uploader("Upload your exam paper (PDF)", type=["pdf"])
 
     if uploaded_file is not None:
-        with st.spinner("Reading your paper..."):
+        with st.spinner("📄 Reading your paper..."):
             pdf_reader = PyPDF2.PdfReader(uploaded_file)
             text = ""
             for page in pdf_reader.pages:
-                text += page.extract_text() or ""
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text
 
         if text.strip():
-            with st.spinner("AI examiner is marking your work..."):
+            with st.spinner("✏️ AI examiner is marking..."):
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
 
@@ -85,7 +87,6 @@ Give feedback in this exact format:
                 )
                 feedback = response.text
 
-                # Extract score
                 score_match = re.search(r"SCORE:\s*(\d+)/10", feedback)
                 score = score_match.group(1) if score_match else "?"
 
@@ -103,12 +104,12 @@ Give feedback in this exact format:
                 st.markdown(feedback)
                 st.balloons()
         else:
-            st.error("Could not read text from PDF. (Handwriting OCR coming soon.)")
+            st.error("No text found. Handwritten OCR coming soon.")
     else:
         st.info("Upload a PDF to get started.")
 
-    # ---------- User History ----------
-    with st.expander("📜 Your Past Markings"):
+    # ---------- History ----------
+    with st.expander("📜 Your Past Markings (last 10)"):
         try:
             history = supabase.table("markings").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
             if history.data:
@@ -117,9 +118,9 @@ Give feedback in this exact format:
                     with st.expander("View feedback"):
                         st.markdown(item["ai_feedback"])
             else:
-                st.info("No past markings yet. Upload a paper to get started!")
+                st.info("No past markings yet. Upload a paper!")
         except Exception as e:
             st.error(f"Could not load history: {e}")
 
 else:
-    st.info("👆 Please login or sign up in the sidebar to start marking papers.")
+    st.info("👆 Please log in or sign up in the sidebar to start marking papers.")
