@@ -1,7 +1,7 @@
 import streamlit as st
 import PyPDF2
 from supabase import create_client
-from datetime import datetime
+from datetime import datetime, date
 import re
 from google import genai
 
@@ -10,7 +10,7 @@ try:
     supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     gemini_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 except Exception as e:
-    st.error(f"Configuration error: Check your secrets. {e}")
+    st.error(f"Configuration error: {e}")
     st.stop()
 
 st.set_page_config(page_title="MarkMate", page_icon="✏️", layout="wide")
@@ -23,18 +23,18 @@ if "user" not in st.session_state:
 if "auth_error" not in st.session_state:
     st.session_state.auth_error = None
 
-# ---------- Authentication Functions ----------
+# ---------- Helper Functions ----------
 def sign_up(email, password):
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
         if res.user:
-            st.success("✅ Account created! Please check your email to confirm your account before logging in.")
+            st.success("✅ Account created! Check your email for confirmation link (spam too).")
             return True
         else:
-            st.error("Sign up failed. Try a different email.")
+            st.error("Sign up failed. Try another email.")
             return False
     except Exception as e:
-        st.error(f"Sign up error: {str(e)}")
+        st.error(f"Sign up error: {e}")
         return False
 
 def sign_in(email, password):
@@ -44,12 +44,14 @@ def sign_in(email, password):
             st.session_state.user = res.user
             st.session_state.auth_error = None
             st.rerun()
-        else:
-            st.error("Invalid email or password.")
     except Exception as e:
         error_msg = str(e)
         if "Email not confirmed" in error_msg:
-            st.error("❌ Please confirm your email first. Check your inbox (and spam) for the confirmation link.")
+            st.error("❌ Please confirm your email first. Check your inbox/spam.")
+            # Optional: resend confirmation button
+            if st.button("Resend confirmation email"):
+                supabase.auth.resend({"email": email, "type": "signup"})
+                st.success("Confirmation email resent!")
         else:
             st.error(f"Login failed: {error_msg}")
 
@@ -58,7 +60,22 @@ def sign_out():
     st.session_state.user = None
     st.rerun()
 
-# ---------- Sidebar Authentication UI ----------
+def get_daily_checks(user_id):
+    today = date.today().isoformat()
+    result = supabase.table("daily_checks").select("checks_used").eq("user_id", user_id).eq("date", today).execute()
+    if result.data:
+        return result.data[0]["checks_used"]
+    else:
+        # Create new record for today
+        supabase.table("daily_checks").insert({"user_id": user_id, "date": today, "checks_used": 0}).execute()
+        return 0
+
+def increment_daily_checks(user_id):
+    today = date.today().isoformat()
+    # Update by incrementing
+    supabase.table("daily_checks").update({"checks_used": supabase.table("daily_checks").increment(1)}).eq("user_id", user_id).eq("date", today).execute()
+
+# ---------- Sidebar Authentication ----------
 with st.sidebar:
     st.header("Account")
     if st.session_state.user is None:
@@ -69,14 +86,10 @@ with st.sidebar:
             if st.button("Login"):
                 if email and password:
                     sign_in(email, password)
-                else:
-                    st.warning("Please enter email and password.")
         with col2:
             if st.button("Sign Up"):
                 if email and password:
                     sign_up(email, password)
-                else:
-                    st.warning("Please enter email and password.")
     else:
         st.write(f"✅ Logged in as: **{st.session_state.user.email}**")
         if st.button("Logout"):
@@ -86,11 +99,19 @@ with st.sidebar:
 if st.session_state.user is not None:
     user_id = st.session_state.user.id
 
-    # ---------- PDF Upload & Marking ----------
+    # --- Daily free limit check (1 per day) ---
+    checks_used = get_daily_checks(user_id)
+    remaining = max(0, 1 - checks_used)
+
+    st.sidebar.markdown(f"**📊 Today's free checks:** {checks_used}/1 used")
+    if remaining <= 0:
+        st.sidebar.warning("🚀 Upgrade to Pro for unlimited checks ($9.99/month)")
+
+    # --- PDF Upload ---
     uploaded_file = st.file_uploader("Upload your exam paper (PDF)", type=["pdf"])
 
-    if uploaded_file is not None:
-        # Read PDF text
+    if uploaded_file is not None and remaining > 0:
+        # Extract text
         with st.spinner("📄 Reading your paper..."):
             try:
                 pdf_reader = PyPDF2.PdfReader(uploaded_file)
@@ -100,14 +121,14 @@ if st.session_state.user is not None:
                     if page_text:
                         text += page_text
                 if not text.strip():
-                    st.error("⚠️ Could not extract text from this PDF. It might be a scanned image (handwriting OCR coming soon).")
+                    st.error("⚠️ Could not extract text. Handwritten OCR coming soon!")
                     st.stop()
             except Exception as e:
-                st.error(f"Error reading PDF: {e}")
+                st.error(f"PDF error: {e}")
                 st.stop()
 
         # AI Marking
-        with st.spinner("✏️ AI examiner (Gemini 2.5) is marking your work..."):
+        with st.spinner("✏️ AI examiner is marking your work..."):
             try:
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
@@ -128,7 +149,7 @@ Give feedback in this exact format:
 💡 SUMMARY: (2 sentences)
 """
                 response = gemini_client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-2.0-flash",  # stable and fast
                     contents=prompt
                 )
                 feedback = response.text
@@ -147,13 +168,18 @@ Give feedback in this exact format:
                     "created_at": datetime.utcnow().isoformat()
                 }).execute()
 
+                # Increment daily counter
+                increment_daily_checks(user_id)
+
                 st.subheader("📝 Marked Paper")
                 st.markdown(feedback)
                 st.balloons()
             except Exception as e:
                 st.error(f"AI marking failed: {e}")
+    elif uploaded_file is not None and remaining <= 0:
+        st.error("❌ You've used your free check for today. Upgrade to Pro for unlimited checks!")
 
-    # ---------- Past Markings History ----------
+    # --- History ---
     with st.expander("📜 Your Past Markings (last 10)"):
         try:
             history = supabase.table("markings").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
@@ -163,19 +189,18 @@ Give feedback in this exact format:
                     with st.expander("View feedback"):
                         st.markdown(item["ai_feedback"])
             else:
-                st.info("No past markings yet. Upload a paper to get started!")
+                st.info("No past markings yet. Upload a paper!")
         except Exception as e:
             st.error(f"Could not load history: {e}")
 
 else:
-    # Not logged in – show marketing info
     st.info("👆 Please **Login** or **Sign Up** in the sidebar to start marking papers.")
     st.markdown("""
     ### ✨ What is MarkMate?
-    - **AI-powered exam checking** – instant feedback like a real examiner.
-    - **Red pen annotations** – coming soon.
-    - **Focus clock & streaks** – coming soon.
-    - **Revision hub** – coming soon.
+    - AI‑powered exam checking – instant feedback like a real examiner.
+    - Red pen annotations – coming soon.
+    - Focus clock & streaks – coming soon.
+    - Revision hub – coming soon.
 
     **Start for free – 1 check per day.**
     """)
