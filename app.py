@@ -6,17 +6,59 @@ import re
 from google import genai
 
 # ---------- Load secrets ----------
-supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
-gemini_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+try:
+    supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    gemini_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+except Exception as e:
+    st.error(f"Configuration error: Check your secrets. {e}")
+    st.stop()
 
 st.set_page_config(page_title="MarkMate", page_icon="✏️", layout="wide")
 st.title("✏️ MarkMate")
 st.caption("AI examiner – like a real teacher with a red pen")
 
-# ---------- Authentication UI ----------
+# ---------- Session State ----------
 if "user" not in st.session_state:
     st.session_state.user = None
+if "auth_error" not in st.session_state:
+    st.session_state.auth_error = None
 
+# ---------- Authentication Functions ----------
+def sign_up(email, password):
+    try:
+        res = supabase.auth.sign_up({"email": email, "password": password})
+        if res.user:
+            st.success("✅ Account created! Please check your email to confirm your account before logging in.")
+            return True
+        else:
+            st.error("Sign up failed. Try a different email.")
+            return False
+    except Exception as e:
+        st.error(f"Sign up error: {str(e)}")
+        return False
+
+def sign_in(email, password):
+    try:
+        res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        if res.user:
+            st.session_state.user = res.user
+            st.session_state.auth_error = None
+            st.rerun()
+        else:
+            st.error("Invalid email or password.")
+    except Exception as e:
+        error_msg = str(e)
+        if "Email not confirmed" in error_msg:
+            st.error("❌ Please confirm your email first. Check your inbox (and spam) for the confirmation link.")
+        else:
+            st.error(f"Login failed: {error_msg}")
+
+def sign_out():
+    supabase.auth.sign_out()
+    st.session_state.user = None
+    st.rerun()
+
+# ---------- Sidebar Authentication UI ----------
 with st.sidebar:
     st.header("Account")
     if st.session_state.user is None:
@@ -25,41 +67,48 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Login"):
-                try:
-                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
-                    st.session_state.user = res.user
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Login failed: {e}")
+                if email and password:
+                    sign_in(email, password)
+                else:
+                    st.warning("Please enter email and password.")
         with col2:
             if st.button("Sign Up"):
-                try:
-                    res = supabase.auth.sign_up({"email": email, "password": password})
-                    st.success("Account created! Please check your email to confirm.")
-                except Exception as e:
-                    st.error(f"Sign up failed: {e}")
+                if email and password:
+                    sign_up(email, password)
+                else:
+                    st.warning("Please enter email and password.")
     else:
-        st.write(f"✅ Logged in as: {st.session_state.user.email}")
+        st.write(f"✅ Logged in as: **{st.session_state.user.email}**")
         if st.button("Logout"):
-            supabase.auth.sign_out()
-            st.session_state.user = None
-            st.rerun()
+            sign_out()
 
-# ---------- Main app (only logged in) ----------
+# ---------- Main App (Logged In) ----------
 if st.session_state.user is not None:
     user_id = st.session_state.user.id
 
+    # ---------- PDF Upload & Marking ----------
     uploaded_file = st.file_uploader("Upload your exam paper (PDF)", type=["pdf"])
 
     if uploaded_file is not None:
-        with st.spinner("Reading your paper..."):
-            pdf_reader = PyPDF2.PdfReader(uploaded_file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() or ""
+        # Read PDF text
+        with st.spinner("📄 Reading your paper..."):
+            try:
+                pdf_reader = PyPDF2.PdfReader(uploaded_file)
+                text = ""
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text
+                if not text.strip():
+                    st.error("⚠️ Could not extract text from this PDF. It might be a scanned image (handwriting OCR coming soon).")
+                    st.stop()
+            except Exception as e:
+                st.error(f"Error reading PDF: {e}")
+                st.stop()
 
-        if text.strip():
-            with st.spinner("AI examiner (Gemini 2.5) is marking your work..."):
+        # AI Marking
+        with st.spinner("✏️ AI examiner (Gemini 2.5) is marking your work..."):
+            try:
                 prompt = f"""
 You are an IGCSE/A-Level examiner. Mark this student's answer.
 
@@ -101,13 +150,11 @@ Give feedback in this exact format:
                 st.subheader("📝 Marked Paper")
                 st.markdown(feedback)
                 st.balloons()
-        else:
-            st.error("Could not read text from PDF. (Handwriting OCR coming soon.)")
-    else:
-        st.info("Upload a PDF to get started.")
+            except Exception as e:
+                st.error(f"AI marking failed: {e}")
 
-    # ---------- User history ----------
-    with st.expander("📜 Your Past Markings"):
+    # ---------- Past Markings History ----------
+    with st.expander("📜 Your Past Markings (last 10)"):
         try:
             history = supabase.table("markings").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(10).execute()
             if history.data:
@@ -121,7 +168,8 @@ Give feedback in this exact format:
             st.error(f"Could not load history: {e}")
 
 else:
-    st.info("👆 Please login or sign up in the sidebar to start marking papers.")
+    # Not logged in – show marketing info
+    st.info("👆 Please **Login** or **Sign Up** in the sidebar to start marking papers.")
     st.markdown("""
     ### ✨ What is MarkMate?
     - **AI-powered exam checking** – instant feedback like a real examiner.
